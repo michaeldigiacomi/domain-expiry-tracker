@@ -6,13 +6,12 @@ when:
   branch: main
   event: push
 
-backend_options:
-  kubernetes:
-    volumeType: emptyDir
-
 steps:
   - name: build-and-push
     image: gcr.io/kaniko-project/executor:debug
+    volumes:
+      - name: workspace
+        emptyDir: {}
     commands:
       - /kaniko/executor
         --context .
@@ -23,6 +22,9 @@ steps:
 
   - name: deploy
     image: bitnami/kubectl:1.31
+    volumes:
+      - name: workspace
+        emptyDir: {}
     commands:
       - kubectl set image deployment/domain-tracker domain-tracker=192.168.4.162:5000/domain-expiry-tracker:${CI_COMMIT_SHA} -n domain-tracker
       - kubectl rollout status deployment/domain-tracker -n domain-tracker --timeout=120s

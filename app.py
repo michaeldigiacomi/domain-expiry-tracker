@@ -510,6 +510,26 @@ def index():
                          ssl_errors=ssl_errors)
 
 
+@app.route('/domains/<domain>/alerts')
+def domain_alerts(domain):
+    """Alert settings page for a specific domain."""
+    # Check if domain exists
+    domains = load_domains()
+    domain_info = next((d for d in domains if d['domain'] == domain), None)
+    
+    if not domain_info:
+        flash(f'Domain {domain} not found', 'error')
+        return redirect(url_for('index'))
+    
+    # Get alert configurations for this domain
+    alert_manager = get_alert_manager()
+    configs = alert_manager.get_configs_for_domain(domain)
+    
+    return render_template('alerts.html',
+                         domain=domain_info,
+                         configs=configs)
+
+
 @app.route('/add', methods=['POST'])
 def add_domain():
     """Add a new domain to track."""

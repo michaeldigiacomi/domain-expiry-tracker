@@ -405,6 +405,7 @@
                             </td>
                             <td class="notes" title="{{ domain.notes }}">{{ domain.notes or '-' }}</td>
                             <td>
+                                <a href="/domains/{{ domain.domain }}/alerts" class="btn" style="background: #667eea; color: white; padding: 6px 12px; font-size: 0.85rem; text-decoration: none; display: inline-block; margin-right: 5px;">Alerts</a>
                                 <a href="/remove/{{ domain.domain }}" class="btn btn-danger" onclick="return confirm('Remove {{ domain.domain }}?')">Remove</a>
                             </td>
                         </tr>
