@@ -9,6 +9,7 @@ resources:
   - secret.yaml
   - deployment.yaml
   - service.yaml
+  - route.yaml
 
 images:
   - name: 192.168.4.162:5000/domain-expiry-tracker
