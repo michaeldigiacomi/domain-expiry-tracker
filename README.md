@@ -5,6 +5,7 @@ A web application to monitor domain expiration dates and get alerts when domains
 ## Features
 
 - 🌐 **Web Dashboard** - View all domains at a glance with status indicators
+- 🔒 **SSL Certificate Tracking** - Monitor SSL cert expiry alongside domain expiry
 - ➕ **Easy Management** - Add/remove domains via web UI
 - 🚨 **Visual Alerts** - Color-coded status (OK, Expiring Soon, Expired, Error)
 - 💾 **Persistent Storage** - Data stored in persistent volume
@@ -78,16 +79,32 @@ Or expose via Ingress/LoadBalancer by adding a route.
    - 🟡 **Expiring Soon** - 5 days or less
    - 🔴 **Expired** - Already expired
    - 🟠 **Error** - WHOIS lookup failed
-3. **Remove Domain**: Click "Remove" to stop tracking
+3. **SSL Certificate Status**: Check the SSL Certificate column for:
+   - 🔒 **Valid** - Green badge with days remaining
+   - ⚠️ **Expiring Soon** - Purple badge (same threshold as domains)
+   - 🔓 **Expired** - Red badge
+   - ❌ **Error** - Orange badge (connection issues or no HTTPS)
+4. **Remove Domain**: Click "Remove" to stop tracking
+
+## SSL Certificate Tracking
+
+The app now monitors SSL certificate expiry in addition to domain registration:
+
+- **Separate from domain expiry**: SSL certs often expire on different schedules
+- **Same alert threshold**: Uses `ALERT_DAYS` environment variable
+- **Independent caching**: 12-hour cache like domain WHOIS data
+- **Error handling**: Shows connection errors for non-HTTPS sites or timeouts
+
+This helps catch SSL certificates that expire separately from domain registrations - a common cause of "Your connection is not private" browser errors.
 
 ## API Endpoints
 
 - `GET /` - Web dashboard
-- `GET /api/status` - JSON API with all domains
-- `GET /health` - Health check
+- `GET /api/status` - JSON API with all domains (includes `ssl` field for each domain)
+- `GET /health` - Health check (includes both domain and SSL cache info)
 - `POST /add` - Add domain (form data: `domain`, `notes`)
 - `GET /remove/<domain>` - Remove domain
-- `GET /check/<domain>` - Check single domain status
+- `GET /check/<domain>` - Check single domain status (includes SSL certificate info)
 
 ## Local Development
 
