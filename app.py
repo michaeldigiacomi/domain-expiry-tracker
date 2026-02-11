@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
 import whois
 import json
 import os
@@ -9,15 +9,58 @@ import time
 import socket
 import ssl
 import subprocess
+import requests
+import asyncio
+from alert_manager import get_alert_manager, AlertManager, AlertType
+
+# SQLAlchemy imports
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, scoped_session
+
+# APScheduler for background jobs
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+Base = declarative_base()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
 
 CONFIG_PATH = os.environ.get('CONFIG_PATH', '/data/domains.json')
+DATABASE_PATH = os.environ.get('DATABASE_PATH', '/data/domain_tracker.db')
+
+# Database setup
+database_url = os.environ.get('DATABASE_URL', f'sqlite:///{DATABASE_PATH}')
+engine = create_engine(database_url, connect_args={'check_same_thread': False} if 'sqlite' in database_url else {})
+Session = scoped_session(sessionmaker(bind=engine))
+
+
+class UptimeCheck(Base):
+    """Model for storing uptime check results."""
+    __tablename__ = 'uptime_checks'
+    
+    id = Column(Integer, primary_key=True)
+    domain = Column(String(255), nullable=False, index=True)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    status_code = Column(Integer, nullable=True)
+    response_time_ms = Column(Float, nullable=True)
+    is_up = Column(Boolean, default=False, nullable=False)
+    error_message = Column(String(500), nullable=True)
+
+
+# Create tables
+Base.metadata.create_all(engine)
 DISCORD_WEBHOOK = os.environ.get('DISCORD_WEBHOOK_URL', '')
 ALERT_DAYS = int(os.environ.get('ALERT_DAYS', '5'))
 WHOIS_TIMEOUT = int(os.environ.get('WHOIS_TIMEOUT', '8'))  # seconds
 CACHE_TTL = int(os.environ.get('CACHE_TTL', '43200'))  # 12 hours default
+UPTIME_CHECK_INTERVAL = int(os.environ.get('UPTIME_CHECK_INTERVAL', '300'))  # 5 minutes default
+UPTIME_TIMEOUT = int(os.environ.get('UPTIME_TIMEOUT', '10'))  # seconds
+
+# Initialize scheduler
+scheduler = BackgroundScheduler()
+scheduler.start()
 
 # In-memory cache for domain WHOIS results
 # Structure: {domain: {'data': {...}, 'timestamp': datetime, 'fetching': bool}}
@@ -28,6 +71,137 @@ _cache_lock = Lock()
 # Structure: {domain: {'data': {...}, 'timestamp': datetime}}
 _ssl_cache = {}
 _ssl_cache_lock = Lock()
+
+
+def check_domain_uptime(domain):
+    """Check HTTP uptime for a domain."""
+    # Clean domain - ensure proper URL format
+    clean_domain = domain.replace('https://', '').replace('http://', '').split('/')[0]
+    urls_to_try = [
+        f'https://{clean_domain}',
+        f'http://{clean_domain}'
+    ]
+    
+    for url in urls_to_try:
+        try:
+            start_time = time.time()
+            response = requests.get(
+                url,
+                timeout=UPTIME_TIMEOUT,
+                allow_redirects=True,
+                headers={'User-Agent': 'DomainExpiryTracker/1.0'}
+            )
+            response_time_ms = (time.time() - start_time) * 1000
+            
+            return {
+                'is_up': True,
+                'status_code': response.status_code,
+                'response_time_ms': round(response_time_ms, 2),
+                'error_message': None
+            }
+        except requests.exceptions.SSLError:
+            # SSL error but server is responding
+            response_time_ms = (time.time() - start_time) * 1000
+            return {
+                'is_up': True,
+                'status_code': None,
+                'response_time_ms': round(response_time_ms, 2),
+                'error_message': 'SSL certificate error'
+            }
+        except requests.exceptions.ConnectionError as e:
+            # Try next URL (http vs https)
+            continue
+        except requests.exceptions.Timeout:
+            return {
+                'is_up': False,
+                'status_code': None,
+                'response_time_ms': None,
+                'error_message': 'Request timed out'
+            }
+        except Exception as e:
+            return {
+                'is_up': False,
+                'status_code': None,
+                'response_time_ms': None,
+                'error_message': str(e)[:500]
+            }
+    
+    return {
+        'is_up': False,
+        'status_code': None,
+        'response_time_ms': None,
+        'error_message': 'Could not connect to domain'
+    }
+
+
+def perform_uptime_checks():
+    """Background job to check uptime for all monitored domains."""
+    try:
+        domains = load_domains()
+        session = Session()
+        
+        for domain_info in domains:
+            domain = domain_info['domain']
+            try:
+                result = check_domain_uptime(domain)
+                
+                uptime_check = UptimeCheck(
+                    domain=domain,
+                    timestamp=datetime.utcnow(),
+                    status_code=result['status_code'],
+                    response_time_ms=result['response_time_ms'],
+                    is_up=result['is_up'],
+                    error_message=result['error_message']
+                )
+                session.add(uptime_check)
+                
+            except Exception as e:
+                # Log error but continue checking other domains
+                uptime_check = UptimeCheck(
+                    domain=domain,
+                    timestamp=datetime.utcnow(),
+                    is_up=False,
+                    error_message=str(e)[:500]
+                )
+                session.add(uptime_check)
+        
+        session.commit()
+        session.close()
+        
+        # Clean up old records (keep last 30 days)
+        cleanup_old_uptime_checks()
+        
+    except Exception as e:
+        print(f"Error in uptime check job: {e}")
+
+
+def cleanup_old_uptime_checks():
+    """Remove uptime checks older than 30 days to prevent database bloat."""
+    try:
+        session = Session()
+        cutoff_date = datetime.utcnow() - timedelta(days=30)
+        session.query(UptimeCheck).filter(UptimeCheck.timestamp < cutoff_date).delete(synchronize_session=False)
+        session.commit()
+        session.close()
+    except Exception as e:
+        print(f"Error cleaning up old uptime checks: {e}")
+
+
+# Schedule uptime checks
+scheduler.add_job(
+    perform_uptime_checks,
+    trigger=IntervalTrigger(seconds=UPTIME_CHECK_INTERVAL),
+    id='uptime_check_job',
+    name='Uptime Check Job',
+    replace_existing=True
+)
+
+# Run initial check on startup (after a short delay to let app start)
+def schedule_initial_check():
+    time.sleep(5)
+    perform_uptime_checks()
+
+Thread(target=schedule_initial_check, daemon=True).start()
 
 
 def check_ssl_certificate(domain, use_cache=True):
@@ -424,6 +598,107 @@ def health():
         'ssl_cache_entries': ssl_cache_info
     }
 
+
+@app.route('/api/domains/<domain>/uptime')
+def api_domain_uptime(domain):
+    """Get uptime check history for a domain (last 24 hours)."""
+    session = Session()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        checks = session.query(UptimeCheck).filter(
+            UptimeCheck.domain == domain,
+            UptimeCheck.timestamp >= cutoff
+        ).order_by(UptimeCheck.timestamp.desc()).all()
+        
+        result = {
+            'domain': domain,
+            'period_hours': 24,
+            'total_checks': len(checks),
+            'checks': [
+                {
+                    'timestamp': check.timestamp.isoformat(),
+                    'status_code': check.status_code,
+                    'response_time_ms': check.response_time_ms,
+                    'is_up': check.is_up,
+                    'error_message': check.error_message
+                }
+                for check in checks
+            ]
+        }
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+@app.route('/api/domains/<domain>/uptime/summary')
+def api_domain_uptime_summary(domain):
+    """Get uptime summary for a domain (last 24 hours)."""
+    session = Session()
+    try:
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        checks = session.query(UptimeCheck).filter(
+            UptimeCheck.domain == domain,
+            UptimeCheck.timestamp >= cutoff
+        ).all()
+        
+        total_checks = len(checks)
+        if total_checks == 0:
+            return jsonify({
+                'domain': domain,
+                'period_hours': 24,
+                'uptime_percentage': None,
+                'avg_response_time_ms': None,
+                'total_checks': 0,
+                'successful_checks': 0,
+                'failed_checks': 0,
+                'message': 'No uptime data available for this period'
+            })
+        
+        successful_checks = sum(1 for check in checks if check.is_up)
+        failed_checks = total_checks - successful_checks
+        uptime_percentage = round((successful_checks / total_checks) * 100, 2)
+        
+        # Calculate average response time (only for successful checks with response time)
+        response_times = [check.response_time_ms for check in checks if check.is_up and check.response_time_ms is not None]
+        avg_response_time_ms = round(sum(response_times) / len(response_times), 2) if response_times else None
+        
+        return jsonify({
+            'domain': domain,
+            'period_hours': 24,
+            'uptime_percentage': uptime_percentage,
+            'avg_response_time_ms': avg_response_time_ms,
+            'total_checks': total_checks,
+            'successful_checks': successful_checks,
+            'failed_checks': failed_checks,
+            'last_check': checks[-1].timestamp.isoformat() if checks else None
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+
+# Ensure database directory exists
+os.makedirs(os.path.dirname(DATABASE_PATH) if os.path.dirname(DATABASE_PATH) else '.', exist_ok=True)
+
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    """Remove database session at end of request."""
+    Session.remove()
+
+
+import atexit
+
+
+def shutdown_scheduler():
+    """Shutdown the scheduler on exit."""
+    scheduler.shutdown()
+
+
+atexit.register(shutdown_scheduler)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
