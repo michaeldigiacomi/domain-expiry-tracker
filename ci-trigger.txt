@@ -1,1 +1,1 @@
-Trigger build - pure host - $(date +%s)
+Test runner - $(date +%s)
