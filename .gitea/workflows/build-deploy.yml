@@ -14,29 +14,36 @@ jobs:
     runs-on: host
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        run: |
+          rm -rf /tmp/domain-expiry-tracker
+          git clone http://git.digitaladrenalin.net/admin/domain-expiry-tracker.git /tmp/domain-expiry-tracker
+          cd /tmp/domain-expiry-tracker
+          git checkout ${{ github.sha }}
 
       - name: Build and push
         run: |
+          cd /tmp/domain-expiry-tracker
           IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
           LATEST_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           
           docker build -t $IMAGE_TAG -t $LATEST_TAG .
           docker push $IMAGE_TAG
           docker push $LATEST_TAG
-          
-          echo "image=$IMAGE_TAG" >> $GITHUB_OUTPUT
-        id: build
 
   deploy:
     runs-on: host
     needs: build
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        run: |
+          rm -rf /tmp/domain-expiry-tracker
+          git clone http://git.digitaladrenalin.net/admin/domain-expiry-tracker.git /tmp/domain-expiry-tracker
+          cd /tmp/domain-expiry-tracker
+          git checkout ${{ github.sha }}
 
       - name: Deploy to Kubernetes
         run: |
+          cd /tmp/domain-expiry-tracker
           # Create namespace if it doesn't exist
           kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
           
