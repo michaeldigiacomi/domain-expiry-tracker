@@ -59,6 +59,43 @@
         .stat-card.expired h3 { color: #c0392b; }
         .stat-card.ok h3 { color: #27ae60; }
         .stat-card.error h3 { color: #f39c12; }
+        .stat-card.ssl-alert h3 { color: #9b59b6; }
+        
+        .ssl-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        .ssl-ok {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        
+        .ssl-alert {
+            background: #f3e5f5;
+            color: #7b1fa2;
+        }
+        
+        .ssl-expired {
+            background: #ffebee;
+            color: #c62828;
+        }
+        
+        .ssl-error {
+            background: #fff3e0;
+            color: #e65100;
+        }
+        
+        .ssl-info {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 4px;
+        }
         
         .add-form {
             background: white;
@@ -267,15 +304,19 @@
             </div>
             <div class="stat-card alert">
                 <h3>{{ alerts }}</h3>
-                <p>Expiring Soon (&lt;{{ alert_days }} days)</p>
+                <p>Domain Expiring (&lt;{{ alert_days }} days)</p>
+            </div>
+            <div class="stat-card ssl-alert">
+                <h3>{{ ssl_alerts }}</h3>
+                <p>SSL Expiring (&lt;{{ alert_days }} days)</p>
             </div>
             <div class="stat-card expired">
                 <h3>{{ expired }}</h3>
-                <p>Expired</p>
+                <p>Domain Expired</p>
             </div>
             <div class="stat-card error">
                 <h3>{{ errors }}</h3>
-                <p>Errors</p>
+                <p>Domain Errors</p>
             </div>
         </div>
         
@@ -308,9 +349,9 @@
                     <thead>
                         <tr>
                             <th>Domain</th>
-                            <th>Status</th>
-                            <th>Days Left</th>
-                            <th>Expiry Date</th>
+                            <th>Domain Status</th>
+                            <th>Domain Expires</th>
+                            <th>SSL Certificate</th>
                             <th class="notes">Notes</th>
                             <th>Actions</th>
                         </tr>
@@ -330,20 +371,36 @@
                                     <span class="status-badge status-ok">OK</span>
                                 {% endif %}
                             </td>
-                            <td class="days-left {% if domain.expired %}expired{% elif domain.alert %}alert{% else %}ok{% endif %}">
-                                {% if domain.error %}
-                                    -
-                                {% elif domain.expired %}
-                                    {{ domain.days_left }} days ago
-                                {% else %}
-                                    {{ domain.days_left }} days
-                                {% endif %}
-                            </td>
                             <td>
                                 {% if domain.error %}
                                     <span style="color: #e74c3c;">{{ domain.error }}</span>
                                 {% else %}
-                                    {{ domain.expiry_date }}
+                                    <span class="days-left {% if domain.expired %}expired{% elif domain.alert %}alert{% else %}ok{% endif %}">
+                                        {% if domain.expired %}
+                                            {{ domain.days_left }} days ago
+                                        {% else %}
+                                            {{ domain.days_left }} days
+                                        {% endif %}
+                                    </span>
+                                    <div style="font-size: 0.8rem; color: #666; margin-top: 2px;">{{ domain.expiry_date }}</div>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if domain.ssl %}
+                                    {% if domain.ssl.error %}
+                                        <span class="ssl-badge ssl-error">🔒 {{ domain.ssl.error[:40] }}{% if domain.ssl.error|length > 40 %}...{% endif %}</span>
+                                    {% elif domain.ssl.expired %}
+                                        <span class="ssl-badge ssl-expired">🔓 Expired</span>
+                                        <div class="ssl-info">{{ domain.ssl.days_left }} days ago</div>
+                                    {% elif domain.ssl.alert %}
+                                        <span class="ssl-badge ssl-alert">⚠️ {{ domain.ssl.days_left }} days</span>
+                                        <div class="ssl-info">{{ domain.ssl.expiry_date }}</div>
+                                    {% else %}
+                                        <span class="ssl-badge ssl-ok">🔒 {{ domain.ssl.days_left }} days</span>
+                                        <div class="ssl-info">{{ domain.ssl.expiry_date }}</div>
+                                    {% endif %}
+                                {% else %}
+                                    <span class="ssl-badge ssl-error">No SSL data</span>
                                 {% endif %}
                             </td>
                             <td class="notes" title="{{ domain.notes }}">{{ domain.notes or '-' }}</td>
@@ -363,7 +420,7 @@
         </div>
         
         <footer>
-            <p>Domain Expiry Tracker • Auto-refreshes every 12 hours</p>
+            <p>Domain Expiry Tracker • Monitors domain registration & SSL certificates • Auto-refreshes every 12 hours</p>
         </footer>
     </div>
     

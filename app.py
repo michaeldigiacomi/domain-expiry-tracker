@@ -7,6 +7,8 @@ from threading import Thread, Lock
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import time
 import socket
+import ssl
+import subprocess
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
@@ -21,6 +23,118 @@ CACHE_TTL = int(os.environ.get('CACHE_TTL', '43200'))  # 12 hours default
 # Structure: {domain: {'data': {...}, 'timestamp': datetime, 'fetching': bool}}
 _whois_cache = {}
 _cache_lock = Lock()
+
+# In-memory cache for SSL certificate results
+# Structure: {domain: {'data': {...}, 'timestamp': datetime}}
+_ssl_cache = {}
+_ssl_cache_lock = Lock()
+
+
+def check_ssl_certificate(domain, use_cache=True):
+    """Check SSL certificate expiration for a domain."""
+    now = datetime.now()
+    
+    # Check cache first
+    if use_cache:
+        with _ssl_cache_lock:
+            cached = _ssl_cache.get(domain)
+            if cached:
+                age = (now - cached['timestamp']).total_seconds()
+                if age < CACHE_TTL:
+                    result = cached['data'].copy()
+                    result['cached'] = True
+                    result['cache_age_minutes'] = int(age / 60)
+                    return result
+    
+    # Clean domain - remove any protocol or path
+    clean_domain = domain.replace('https://', '').replace('http://', '').split('/')[0].split(':')[0]
+    
+    try:
+        # Create SSL context
+        context = ssl.create_default_context()
+        
+        # Set timeout for socket operations
+        with socket.create_connection((clean_domain, 443), timeout=WHOIS_TIMEOUT) as sock:
+            with context.wrap_socket(sock, server_hostname=clean_domain) as ssock:
+                cert = ssock.getpeercert()
+                
+                if not cert:
+                    return {'error': 'No SSL certificate found', 'cached': False}
+                
+                # Parse expiration date
+                expiry_str = cert.get('notAfter')
+                if not expiry_str:
+                    return {'error': 'Could not determine certificate expiration', 'cached': False}
+                
+                # Parse the date string (format: 'May 30 12:00:00 2025 GMT')
+                expiry_date = datetime.strptime(expiry_str, '%b %d %H:%M:%S %Y %Z')
+                
+                days_left = (expiry_date - now).days
+                
+                # Get issuer info
+                issuer = cert.get('issuer', [])
+                issuer_name = 'Unknown'
+                for item in issuer:
+                    for key, value in item:
+                        if key == 'organizationName':
+                            issuer_name = value
+                            break
+                    if issuer_name != 'Unknown':
+                        break
+                
+                # Get subject alternative names
+                san = cert.get('subjectAltName', [])
+                alt_names = [name[1] for name in san if name[0] == 'DNS']
+                
+                result = {
+                    'expiry_date': expiry_date.strftime('%Y-%m-%d'),
+                    'days_left': days_left,
+                    'expired': days_left < 0,
+                    'alert': days_left <= ALERT_DAYS,
+                    'issuer': issuer_name,
+                    'alt_names': alt_names[:5],  # Limit to first 5
+                    'cached': False
+                }
+    except socket.timeout:
+        # Return cached data if available
+        with _ssl_cache_lock:
+            cached = _ssl_cache.get(domain)
+            if cached:
+                result = cached['data'].copy()
+                result['cached'] = True
+                result['stale'] = True
+                result['error'] = 'SSL check timed out, showing cached data'
+                return result
+        result = {'error': 'SSL connection timed out', 'cached': False}
+    except socket.gaierror:
+        result = {'error': 'Could not resolve domain for SSL check', 'cached': False}
+    except ssl.SSLCertVerificationError as e:
+        result = {'error': f'SSL certificate verification failed: {str(e)}', 'cached': False}
+    except ssl.SSLError as e:
+        result = {'error': f'SSL error: {str(e)}', 'cached': False}
+    except ConnectionRefusedError:
+        result = {'error': 'Connection refused - no HTTPS service', 'cached': False}
+    except Exception as e:
+        # Return cached data if available on any error
+        with _ssl_cache_lock:
+            cached = _ssl_cache.get(domain)
+            if cached:
+                result = cached['data'].copy()
+                result['cached'] = True
+                result['stale'] = True
+                result['error'] = f'SSL error, showing cached data: {str(e)}'
+                return result
+        result = {'error': str(e), 'cached': False}
+    
+    # Update cache with successful result
+    if 'error' not in result or not result.get('stale'):
+        with _ssl_cache_lock:
+            _ssl_cache[domain] = {
+                'data': result.copy(),
+                'timestamp': now
+            }
+    
+    return result
 
 
 def load_domains():
@@ -129,24 +243,27 @@ def check_domain(domain, use_cache=True):
 
 
 def get_all_domains_status():
-    """Get status for all domains."""
+    """Get status for all domains including SSL certificate info."""
     domains = load_domains()
     results = []
     
     for domain_info in domains:
         domain = domain_info['domain']
-        status = check_domain(domain, use_cache=True)
+        domain_status = check_domain(domain, use_cache=True)
+        ssl_status = check_ssl_certificate(domain, use_cache=True)
         
         results.append({
             'domain': domain,
             'notes': domain_info.get('notes', ''),
             'added': domain_info.get('added', ''),
-            **status
+            **domain_status,
+            'ssl': ssl_status
         })
     
-    # Sort: alerts first, then by days left
+    # Sort: domain alerts first, then SSL alerts, then by domain days left
     results.sort(key=lambda x: (
         0 if x.get('alert') and not x.get('expired') else 1,
+        0 if x.get('ssl', {}).get('alert') and not x.get('ssl', {}).get('expired') else 1,
         0 if x.get('expired') else 1,
         x.get('days_left', 9999)
     ))
@@ -155,16 +272,21 @@ def get_all_domains_status():
 
 
 def refresh_cache_background():
-    """Background thread to refresh WHOIS cache for all domains."""
+    """Background thread to refresh WHOIS and SSL cache for all domains."""
     def _refresh():
         domains = load_domains()
         for domain_info in domains:
             domain = domain_info['domain']
             try:
                 check_domain(domain, use_cache=False)
-                time.sleep(1)  # Be nice to WHOIS servers
+                time.sleep(0.5)
             except Exception:
                 pass  # Silently fail on background refresh
+            try:
+                check_ssl_certificate(domain, use_cache=False)
+                time.sleep(0.5)
+            except Exception:
+                pass
     
     thread = Thread(target=_refresh, daemon=True)
     thread.start()
@@ -172,16 +294,21 @@ def refresh_cache_background():
 
 @app.route('/')
 def index():
-    """Main dashboard showing all domains."""
+    """Main dashboard showing all domains with SSL status."""
     domains = get_all_domains_status()
     
-    # Count stats
+    # Count domain stats
     total = len(domains)
     alerts = sum(1 for d in domains if d.get('alert') and not d.get('expired'))
     expired = sum(1 for d in domains if d.get('expired'))
     errors = sum(1 for d in domains if 'error' in d)
     cached = sum(1 for d in domains if d.get('cached'))
     stale = sum(1 for d in domains if d.get('stale'))
+    
+    # Count SSL stats
+    ssl_alerts = sum(1 for d in domains if d.get('ssl', {}).get('alert') and not d.get('ssl', {}).get('expired'))
+    ssl_expired = sum(1 for d in domains if d.get('ssl', {}).get('expired'))
+    ssl_errors = sum(1 for d in domains if 'error' in d.get('ssl', {}))
     
     return render_template('index.html', 
                          domains=domains, 
@@ -191,7 +318,10 @@ def index():
                          errors=errors,
                          cached=cached,
                          stale=stale,
-                         alert_days=ALERT_DAYS)
+                         alert_days=ALERT_DAYS,
+                         ssl_alerts=ssl_alerts,
+                         ssl_expired=ssl_expired,
+                         ssl_errors=ssl_errors)
 
 
 @app.route('/add', methods=['POST'])
@@ -250,9 +380,10 @@ def remove_domain(domain):
 
 @app.route('/check/<domain>')
 def check_single(domain):
-    """Check a single domain's status (force refresh)."""
+    """Check a single domain's status including SSL (force refresh)."""
     status = check_domain(domain, use_cache=False)
-    return {'domain': domain, **status}
+    ssl_status = check_ssl_certificate(domain, use_cache=False)
+    return {'domain': domain, **status, 'ssl': ssl_status}
 
 
 @app.route('/api/status')
@@ -271,17 +402,26 @@ def api_refresh():
 @app.route('/health')
 def health():
     """Health check endpoint."""
+    now = datetime.now()
     cache_info = {
         domain: {
-            'age_minutes': int((datetime.now() - data['timestamp']).total_seconds() / 60)
+            'age_minutes': int((now - data['timestamp']).total_seconds() / 60)
         }
         for domain, data in _whois_cache.items()
     }
+    ssl_cache_info = {
+        domain: {
+            'age_minutes': int((now - data['timestamp']).total_seconds() / 60)
+        }
+        for domain, data in _ssl_cache.items()
+    }
     return {
         'status': 'healthy',
-        'timestamp': datetime.now().isoformat(),
-        'cache_size': len(_whois_cache),
-        'cache_entries': cache_info
+        'timestamp': now.isoformat(),
+        'domain_cache_size': len(_whois_cache),
+        'domain_cache_entries': cache_info,
+        'ssl_cache_size': len(_ssl_cache),
+        'ssl_cache_entries': ssl_cache_info
     }
 
 
