@@ -1,1 +1,1 @@
-Trigger build - deploy fix - $(date +%s)
+Trigger build - pure host - $(date +%s)
