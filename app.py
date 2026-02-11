@@ -49,6 +49,18 @@ class UptimeCheck(Base):
     error_message = Column(String(500), nullable=True)
 
 
+class AlertConfigModel(Base):
+    """Model for storing webhook alert configurations."""
+    __tablename__ = 'alert_configs'
+    
+    id = Column(String(32), primary_key=True)
+    domain_id = Column(String(255), nullable=False, index=True)
+    webhook_url = Column(String(1024), nullable=False)
+    webhook_type = Column(String(32), nullable=False)  # 'discord' or 'slack'
+    alert_types = Column(String(255), nullable=False)  # JSON array: ["domain_expiry", "ssl_expiry", "uptime_down"]
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 # Create tables
 Base.metadata.create_all(engine)
 DISCORD_WEBHOOK = os.environ.get('DISCORD_WEBHOOK_URL', '')
@@ -699,6 +711,189 @@ def shutdown_scheduler():
 
 
 atexit.register(shutdown_scheduler)
+
+
+# ==================== Alert Configuration API Endpoints ====================
+
+@app.route('/api/domains/<domain>/alerts', methods=['POST'])
+def create_alert_config(domain):
+    """Create a new alert configuration for a domain."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        webhook_url = data.get('webhook_url')
+        webhook_type = data.get('webhook_type')
+        alert_types = data.get('alert_types', [])
+        
+        # Validate required fields
+        if not webhook_url:
+            return jsonify({'error': 'webhook_url is required'}), 400
+        if not webhook_type:
+            return jsonify({'error': 'webhook_type is required'}), 400
+        if not alert_types:
+            return jsonify({'error': 'alert_types is required'}), 400
+        
+        # Validate webhook_type
+        valid_types = ['discord', 'slack']
+        if webhook_type not in valid_types:
+            return jsonify({'error': f'webhook_type must be one of: {valid_types}'}), 400
+        
+        # Validate alert_types
+        valid_alert_types = ['domain_expiry', 'ssl_expiry', 'uptime_down']
+        for at in alert_types:
+            if at not in valid_alert_types:
+                return jsonify({'error': f'Invalid alert_type: {at}. Must be one of: {valid_alert_types}'}), 400
+        
+        # Check if domain exists
+        domains = load_domains()
+        if not any(d['domain'] == domain for d in domains):
+            return jsonify({'error': f'Domain {domain} not found'}), 404
+        
+        alert_manager = get_alert_manager()
+        config = alert_manager.create_config(
+            domain_id=domain,
+            webhook_url=webhook_url,
+            webhook_type=webhook_type,
+            alert_types=alert_types
+        )
+        
+        return jsonify({
+            'message': 'Alert configuration created successfully',
+            'config': config.to_dict()
+        }), 201
+        
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'Failed to create alert config: {str(e)}'}), 500
+
+
+@app.route('/api/domains/<domain>/alerts', methods=['GET'])
+def list_alert_configs(domain):
+    """List all alert configurations for a domain."""
+    try:
+        alert_manager = get_alert_manager()
+        configs = alert_manager.get_configs_for_domain(domain)
+        
+        return jsonify({
+            'domain': domain,
+            'configs': [c.to_dict() for c in configs],
+            'count': len(configs)
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to list alert configs: {str(e)}'}), 500
+
+
+@app.route('/api/alerts/<config_id>', methods=['DELETE'])
+def delete_alert_config(config_id):
+    """Delete an alert configuration."""
+    try:
+        alert_manager = get_alert_manager()
+        
+        # Verify config exists
+        config = alert_manager.get_config(config_id)
+        if not config:
+            return jsonify({'error': f'Alert configuration {config_id} not found'}), 404
+        
+        if alert_manager.delete_config(config_id):
+            return jsonify({
+                'message': f'Alert configuration {config_id} deleted successfully'
+            })
+        else:
+            return jsonify({'error': 'Failed to delete alert configuration'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Failed to delete alert config: {str(e)}'}), 500
+
+
+@app.route('/api/alerts', methods=['GET'])
+def list_all_alert_configs():
+    """List all alert configurations (admin endpoint)."""
+    try:
+        alert_manager = get_alert_manager()
+        configs = alert_manager.list_all_configs()
+        
+        return jsonify({
+            'configs': [c.to_dict() for c in configs],
+            'count': len(configs)
+        })
+    except Exception as e:
+        return jsonify({'error': f'Failed to list alert configs: {str(e)}'}), 500
+
+
+@app.route('/api/alerts/test', methods=['POST'])
+def test_alert_webhook():
+    """Test a webhook URL by sending a test message."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'Request body required'}), 400
+        
+        webhook_url = data.get('webhook_url')
+        webhook_type = data.get('webhook_type', 'discord')
+        
+        if not webhook_url:
+            return jsonify({'error': 'webhook_url is required'}), 400
+        
+        alert_manager = get_alert_manager()
+        
+        # Create test payload
+        if webhook_type == 'discord':
+            payload = {
+                "embeds": [{
+                    "title": "🧪 Test Alert",
+                    "description": "This is a test message from Domain Expiry Tracker.",
+                    "color": 0x00FF00,
+                    "fields": [
+                        {"name": "Status", "value": "✅ Webhook is working!", "inline": True}
+                    ],
+                    "timestamp": datetime.now().isoformat()
+                }]
+            }
+        else:  # slack
+            payload = {
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "🧪 Test Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "This is a test message from Domain Expiry Tracker."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": "*Status:* ✅ Webhook is working!"
+                        }
+                    }
+                ]
+            }
+        
+        # Send test webhook
+        async def send_test():
+            return await alert_manager._send_webhook(webhook_url, payload)
+        
+        success = asyncio.run(send_test())
+        
+        if success:
+            return jsonify({'message': 'Test webhook sent successfully', 'success': True})
+        else:
+            return jsonify({'error': 'Failed to send test webhook', 'success': False}), 500
+            
+    except Exception as e:
+        return jsonify({'error': f'Test failed: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

@@ -2,6 +2,7 @@ python-whois==0.9.5
 Flask==3.0.3
 gunicorn==23.0.0
 cryptography==42.0.8
+aiohttp==3.9.5
 SQLAlchemy==2.0.35
 APScheduler==3.10.4
 requests==2.32.3
