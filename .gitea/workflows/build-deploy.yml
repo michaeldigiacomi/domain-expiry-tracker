@@ -1,0 +1,64 @@
+name: Build and Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: 192.168.4.162:5000
+  IMAGE_NAME: domain-expiry-tracker
+  NAMESPACE: domain-tracker
+
+jobs:
+  build:
+    runs-on: Legion5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        run: |
+          IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          LATEST_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          
+          docker build -t $IMAGE_TAG -t $LATEST_TAG .
+          docker push $IMAGE_TAG
+          docker push $LATEST_TAG
+          
+          echo "image=$IMAGE_TAG" >> $GITHUB_OUTPUT
+        id: build
+
+  deploy:
+    runs-on: Legion5
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          cp /home/michaeldg/.kube/config ~/.kube/config
+
+      - name: Deploy to Kubernetes
+        run: |
+          # Create namespace if it doesn't exist
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Apply k8s manifests
+          kubectl apply -k k8s/
+          
+          # Update deployment with new image
+          IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          kubectl set image deployment/domain-expiry-tracker domain-expiry-tracker=$IMAGE_TAG -n ${{ env.NAMESPACE }}
+          
+          # Wait for rollout
+          kubectl rollout status deployment/domain-expiry-tracker -n ${{ env.NAMESPACE }} --timeout=120s
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get svc -n ${{ env.NAMESPACE }}
