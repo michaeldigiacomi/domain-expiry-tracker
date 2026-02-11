@@ -23,6 +23,8 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV CONFIG_PATH=/data/domains.json
 ENV FLASK_APP=app.py
+ENV WHOIS_TIMEOUT=8
+ENV CACHE_TTL=43200
 
 # Expose port
 EXPOSE 5000
@@ -31,5 +33,5 @@ EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')" || exit 1
 
-# Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "30", "app:app"]
+# Run with gunicorn (60s timeout to handle slow WHOIS, but individual lookups timeout at 8s)
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--threads", "2", "--timeout", "60", "--keep-alive", "5", "app:app"]

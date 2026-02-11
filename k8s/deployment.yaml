@@ -27,6 +27,10 @@ spec:
               value: "/data/domains.json"
             - name: ALERT_DAYS
               value: "5"
+            - name: WHOIS_TIMEOUT
+              value: "8"
+            - name: CACHE_TTL
+              value: "43200"
             - name: DISCORD_WEBHOOK_URL
               valueFrom:
                 secretKeyRef:
