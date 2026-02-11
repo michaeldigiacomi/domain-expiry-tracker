@@ -45,10 +45,10 @@ jobs:
           
           # Update deployment with new image
           IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          kubectl set image deployment/domain-expiry-tracker domain-expiry-tracker=$IMAGE_TAG -n ${{ env.NAMESPACE }}
+          kubectl set image deployment/domain-tracker domain-tracker=$IMAGE_TAG -n ${{ env.NAMESPACE }}
           
           # Wait for rollout
-          kubectl rollout status deployment/domain-expiry-tracker -n ${{ env.NAMESPACE }} --timeout=120s
+          kubectl rollout status deployment/domain-tracker -n ${{ env.NAMESPACE }} --timeout=120s
 
       - name: Verify deployment
         run: |
