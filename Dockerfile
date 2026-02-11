@@ -13,6 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app.py .
+COPY alert_manager.py .
+COPY domain_tracker.py .
 COPY templates/ templates/
 
 # Create data directory for persistent storage
