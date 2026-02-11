@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: domain-tracker
+  namespace: domain-tracker
+  labels:
+    app: domain-tracker
+spec:
+  type: ClusterIP
+  selector:
+    app: domain-tracker
+  ports:
+    - port: 80
+      targetPort: 5000
+      protocol: TCP

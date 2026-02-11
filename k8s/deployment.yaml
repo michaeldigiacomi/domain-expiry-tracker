@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: domain-tracker
+  namespace: domain-tracker
+  labels:
+    app: domain-tracker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: domain-tracker
+  template:
+    metadata:
+      labels:
+        app: domain-tracker
+    spec:
+      containers:
+        - name: domain-tracker
+          image: 192.168.4.162:5000/domain-expiry-tracker:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              name: http
+          env:
+            - name: CONFIG_PATH
+              value: "/data/domains.json"
+            - name: ALERT_DAYS
+              value: "5"
+            - name: DISCORD_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: domain-tracker-secrets
+                  key: discord-webhook
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: domain-tracker-data
