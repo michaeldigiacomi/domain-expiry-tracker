@@ -6,6 +6,10 @@ when:
   branch: main
   event: push
 
+backend_options:
+  kubernetes:
+    volumeType: emptyDir
+
 steps:
   - name: build-and-push
     image: gcr.io/kaniko-project/executor:debug
