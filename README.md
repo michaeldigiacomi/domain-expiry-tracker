@@ -18,7 +18,7 @@ A web application to monitor domain expiration dates and get alerts when domains
 ### 1. Clone and Build
 
 ```bash
-git clone http://git.digitaladrenalin.net/admin/domain-expiry-tracker.git
+git clone http://git.digitaladrenalin.net/Shared-workspace/domain-expiry-tracker.git
 cd domain-expiry-tracker
 
 # Build Docker image

@@ -16,7 +16,7 @@ jobs:
       - name: Checkout
         run: |
           rm -rf /tmp/domain-expiry-tracker
-          git clone http://git.digitaladrenalin.net/admin/domain-expiry-tracker.git /tmp/domain-expiry-tracker
+          git clone http://git.digitaladrenalin.net/Shared-workspace/domain-expiry-tracker.git /tmp/domain-expiry-tracker
           cd /tmp/domain-expiry-tracker
           git checkout ${{ github.sha }}
 
@@ -37,7 +37,7 @@ jobs:
       - name: Checkout
         run: |
           rm -rf /tmp/domain-expiry-tracker
-          git clone http://git.digitaladrenalin.net/admin/domain-expiry-tracker.git /tmp/domain-expiry-tracker
+          git clone http://git.digitaladrenalin.net/Shared-workspace/domain-expiry-tracker.git /tmp/domain-expiry-tracker
           cd /tmp/domain-expiry-tracker
           git checkout ${{ github.sha }}
 

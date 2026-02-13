@@ -11,6 +11,7 @@ import ssl
 import subprocess
 import requests
 import asyncio
+import random
 from alert_manager import get_alert_manager, AlertManager, AlertType
 
 # SQLAlchemy imports
@@ -21,6 +22,9 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 # APScheduler for background jobs
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+
+# WHOIS Cache
+from whois_cache import get_whois_cache_manager, WhoisCacheManager
 
 Base = declarative_base()
 
