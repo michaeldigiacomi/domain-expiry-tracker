@@ -1,3 +1,8 @@
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+
 steps:
   build:
     image: python:3.11
@@ -7,6 +12,7 @@ steps:
   
   containerize:
     image: woodpeckerci/plugin-docker-buildx
+    privileged: true
     settings:
       repo: ghcr.io/michaeldigiacomi/domain-expiry-tracker
       tags: ${CI_COMMIT_SHA}
@@ -18,4 +24,6 @@ steps:
     commands:
       - kubectl set image deployment/domain-expiry-tracker app=ghcr.io/michaeldigiacomi/domain-expiry-tracker:${CI_COMMIT_SHA} -n domains
       - kubectl rollout status deployment/domain-expiry-tracker -n domains
+    secrets:
+      - KUBECONFIG
 
