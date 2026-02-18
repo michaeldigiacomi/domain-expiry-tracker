@@ -12,5 +12,6 @@ resources:
   - route.yaml
 
 images:
-  - name: 192.168.4.162:5000/domain-expiry-tracker
+  - name: domain-expiry-tracker
+    newName: ghcr.io/michaeldigiacomi/domain-expiry-tracker
     newTag: latest

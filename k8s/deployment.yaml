@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: domain-tracker
-          image: 192.168.4.162:5000/domain-expiry-tracker:latest
+          image: ghcr.io/michaeldigiacomi/domain-expiry-tracker:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 5000
