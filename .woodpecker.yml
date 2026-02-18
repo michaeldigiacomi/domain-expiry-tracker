@@ -1,27 +1,21 @@
-# Woodpecker CI Pipeline for Domain Expiry Tracker
-# Triggers on push to main branch
-
-when:
-  branch: main
-  event: push
-
 steps:
-  - name: build
+  build:
     image: python:3.11
     commands:
       - pip install -r requirements.txt
       - python -m pytest || echo "No tests"
-
-  - name: containerize
+  
+  containerize:
     image: woodpeckerci/plugin-docker-buildx
     settings:
       repo: ghcr.io/michaeldigiacomi/domain-expiry-tracker
       tags: ${CI_COMMIT_SHA}
       username: ${CI_REPO_OWNER}
       password: ${GITHUB_TOKEN}
-
-  - name: deploy
+  
+  deploy:
     image: bitnami/kubectl
     commands:
       - kubectl set image deployment/domain-expiry-tracker app=ghcr.io/michaeldigiacomi/domain-expiry-tracker:${CI_COMMIT_SHA} -n domains
       - kubectl rollout status deployment/domain-expiry-tracker -n domains
+
