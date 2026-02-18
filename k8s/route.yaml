@@ -1,34 +1,27 @@
-apiVersion: gateway.envoyproxy.io/v1alpha1
-kind: BackendTrafficPolicy
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: domain-tracker-timeout
+  name: domain-expiry-tracker
   namespace: domain-tracker
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Note: Traefik middleware for timeouts if needed can be added here
+    # traefik.ingress.kubernetes.io/router.middlewares: domain-tracker-timeout@kubernetescrd
 spec:
-  targetRefs:
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: domain-tracker-route
-  timeout:
-    http:
-      requestTimeout: 60s  # Allow 60s for WHOIS lookups with caching
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: domain-tracker-route
-  namespace: domain-tracker
-spec:
-  parentRefs:
-    - name: main-gateway
-      namespace: default
-  hostnames:
-    - "domains.digitaladrenalin.net"
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - domains.digitaladrenalin.net
+      secretName: domain-expiry-tracker-tls
   rules:
-    - matches:
-        - path:
-            type: PathPrefix
-            value: /
-      backendRefs:
-        - name: domain-tracker
-          namespace: domain-tracker
-          port: 80
+    - host: domains.digitaladrenalin.net
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: domain-tracker
+                port:
+                  number: 80
