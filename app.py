@@ -23,6 +23,9 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+# Flask-Login for authentication
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+
 # WHOIS Cache
 from whois_cache import get_whois_cache_manager, WhoisCacheManager
 
@@ -30,6 +33,32 @@ Base = declarative_base()
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+login_manager.login_message = 'Please log in to access this page.'
+login_manager.login_message_category = 'warning'
+
+# Admin credentials from environment variables
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
+
+
+class User(UserMixin):
+    """Simple user class for Flask-Login."""
+    def __init__(self, id, username):
+        self.id = id
+        self.username = username
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    """Load user by ID."""
+    if user_id == '1':
+        return User('1', ADMIN_USERNAME)
+    return None
 
 CONFIG_PATH = os.environ.get('CONFIG_PATH', '/data/domains.json')
 DATABASE_PATH = os.environ.get('DATABASE_PATH', '/data/domain_tracker.db')
@@ -482,7 +511,50 @@ def refresh_cache_background():
     thread.start()
 
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Handle user login."""
+    # If already logged in, redirect to index
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+    
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '')
+        
+        if not username or not password:
+            flash('Username and password are required', 'error')
+            return redirect(url_for('login'))
+        
+        # Validate credentials
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            user = User('1', ADMIN_USERNAME)
+            login_user(user, remember=True)
+            flash('Login successful!', 'success')
+            
+            # Redirect to the page they were trying to access, or index
+            next_page = request.args.get('next')
+            if next_page:
+                return redirect(next_page)
+            return redirect(url_for('index'))
+        else:
+            flash('Invalid username or password', 'error')
+            return redirect(url_for('login'))
+    
+    return render_template('login.html')
+
+
+@app.route('/logout')
+@login_required
+def logout():
+    """Handle user logout."""
+    logout_user()
+    flash('You have been logged out.', 'success')
+    return redirect(url_for('login'))
+
+
 @app.route('/')
+@login_required
 def index():
     """Main dashboard showing all domains with SSL status."""
     domains = get_all_domains_status()
@@ -515,6 +587,7 @@ def index():
 
 
 @app.route('/domains/<domain>/alerts')
+@login_required
 def domain_alerts(domain):
     """Alert settings page for a specific domain."""
     # Check if domain exists
@@ -535,6 +608,7 @@ def domain_alerts(domain):
 
 
 @app.route('/add', methods=['POST'])
+@login_required
 def add_domain():
     """Add a new domain to track."""
     domain = request.form.get('domain', '').strip().lower()
@@ -574,6 +648,7 @@ def add_domain():
 
 
 @app.route('/remove/<domain>')
+@login_required
 def remove_domain(domain):
     """Remove a domain from tracking."""
     domains = load_domains()
@@ -589,6 +664,7 @@ def remove_domain(domain):
 
 
 @app.route('/check/<domain>')
+@login_required
 def check_single(domain):
     """Check a single domain's status including SSL (force refresh)."""
     status = check_domain(domain, use_cache=False)
@@ -597,12 +673,14 @@ def check_single(domain):
 
 
 @app.route('/api/status')
+@login_required
 def api_status():
     """API endpoint for domain status."""
     return {'domains': get_all_domains_status(), 'alert_days': ALERT_DAYS}
 
 
 @app.route('/api/refresh', methods=['POST'])
+@login_required
 def api_refresh():
     """Force refresh of all domain WHOIS data."""
     refresh_cache_background()
@@ -636,6 +714,7 @@ def health():
 
 
 @app.route('/api/domains/<domain>/uptime')
+@login_required
 def api_domain_uptime(domain):
     """Get uptime check history for a domain (last 24 hours)."""
     session = Session()
@@ -669,6 +748,7 @@ def api_domain_uptime(domain):
 
 
 @app.route('/api/domains/<domain>/uptime/summary')
+@login_required
 def api_domain_uptime_summary(domain):
     """Get uptime summary for a domain (last 24 hours)."""
     session = Session()
@@ -740,6 +820,7 @@ atexit.register(shutdown_scheduler)
 # ==================== Alert Configuration API Endpoints ====================
 
 @app.route('/api/domains/<domain>/alerts', methods=['POST'])
+@login_required
 def create_alert_config(domain):
     """Create a new alert configuration for a domain."""
     try:
@@ -795,6 +876,7 @@ def create_alert_config(domain):
 
 
 @app.route('/api/domains/<domain>/alerts', methods=['GET'])
+@login_required
 def list_alert_configs(domain):
     """List all alert configurations for a domain."""
     try:
@@ -811,6 +893,7 @@ def list_alert_configs(domain):
 
 
 @app.route('/api/alerts/<config_id>', methods=['DELETE'])
+@login_required
 def delete_alert_config(config_id):
     """Delete an alert configuration."""
     try:
@@ -833,6 +916,7 @@ def delete_alert_config(config_id):
 
 
 @app.route('/api/alerts', methods=['GET'])
+@login_required
 def list_all_alert_configs():
     """List all alert configurations (admin endpoint)."""
     try:
@@ -848,6 +932,7 @@ def list_all_alert_configs():
 
 
 @app.route('/api/alerts/test', methods=['POST'])
+@login_required
 def test_alert_webhook():
     """Test a webhook URL by sending a test message."""
     try:

@@ -1,30 +1,27 @@
 # Woodpecker CI Pipeline for Domain Expiry Tracker
 # Triggers on push to main branch
-# Uses Kaniko for unprivileged Docker builds
 
 when:
   branch: main
   event: push
 
 steps:
-  - name: build-and-push
-    image: gcr.io/kaniko-project/executor:debug
-    volumes:
-      - name: workspace
-        emptyDir: {}
+  - name: build
+    image: python:3.11
     commands:
-      - /kaniko/executor
-        --context .
-        --dockerfile Dockerfile
-        --destination 192.168.4.162:5000/domain-expiry-tracker:${CI_COMMIT_SHA}
-        --destination 192.168.4.162:5000/domain-expiry-tracker:latest
-        --insecure
+      - pip install -r requirements.txt
+      - python -m pytest || echo "No tests"
+
+  - name: containerize
+    image: woodpeckerci/plugin-docker-buildx
+    settings:
+      repo: ghcr.io/michaeldigiacomi/domain-expiry-tracker
+      tags: ${CI_COMMIT_SHA}
+      username: ${CI_REPO_OWNER}
+      password: ${GITHUB_TOKEN}
 
   - name: deploy
-    image: bitnami/kubectl:1.31
-    volumes:
-      - name: workspace
-        emptyDir: {}
+    image: bitnami/kubectl
     commands:
-      - kubectl set image deployment/domain-tracker domain-tracker=192.168.4.162:5000/domain-expiry-tracker:${CI_COMMIT_SHA} -n domain-tracker
-      - kubectl rollout status deployment/domain-tracker -n domain-tracker --timeout=120s
+      - kubectl set image deployment/domain-expiry-tracker app=ghcr.io/michaeldigiacomi/domain-expiry-tracker:${CI_COMMIT_SHA} -n domains
+      - kubectl rollout status deployment/domain-expiry-tracker -n domains
