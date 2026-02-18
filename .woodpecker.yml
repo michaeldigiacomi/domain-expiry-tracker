@@ -17,13 +17,17 @@ steps:
       repo: ghcr.io/michaeldigiacomi/domain-expiry-tracker
       tags: ${CI_COMMIT_SHA}
       username: ${CI_REPO_OWNER}
-      password: ${GITHUB_TOKEN}
+      password:
+        from_secret: GITHUB_TOKEN
   
   deploy:
     image: bitnami/kubectl
+    environment:
+      KUBECONFIG:
+        from_secret: KUBECONFIG
     commands:
+      - echo "$KUBECONFIG" | base64 -d > /tmp/kubeconfig
+      - export KUBECONFIG=/tmp/kubeconfig
       - kubectl set image deployment/domain-expiry-tracker app=ghcr.io/michaeldigiacomi/domain-expiry-tracker:${CI_COMMIT_SHA} -n domains
       - kubectl rollout status deployment/domain-expiry-tracker -n domains
-    secrets:
-      - KUBECONFIG
 
