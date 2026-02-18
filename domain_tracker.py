@@ -8,7 +8,7 @@ import whois
 import json
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Tuple
 import argparse
 
@@ -128,8 +128,11 @@ class DomainExpiryTracker:
                 }
             
             # Calculate days left
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             if isinstance(expiry_date, datetime):
+                # Ensure expiry_date is timezone-aware for comparison
+                if expiry_date.tzinfo is None:
+                    expiry_date = expiry_date.replace(tzinfo=timezone.utc)
                 days_left = (expiry_date - now).days
             else:
                 return {

@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, jso
 import whois
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Thread, Lock
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 import time
@@ -251,7 +251,7 @@ Thread(target=schedule_initial_check, daemon=True).start()
 
 def check_ssl_certificate(domain, use_cache=True):
     """Check SSL certificate expiration for a domain."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     
     # Check cache first
     if use_cache:
@@ -392,7 +392,7 @@ def _whois_lookup_with_timeout(domain, timeout=WHOIS_TIMEOUT):
 
 def check_domain(domain, use_cache=True):
     """Check a single domain's expiration date with caching and timeout handling."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     
     # Check cache first
     if use_cache:
@@ -419,6 +419,9 @@ def check_domain(domain, use_cache=True):
         if not expiry_date:
             result = {'error': 'No expiration date found', 'cached': False}
         else:
+            # Ensure expiry_date is timezone-aware for comparison
+            if expiry_date.tzinfo is None:
+                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
             days_left = (expiry_date - now).days
             result = {
                 'expiry_date': expiry_date.strftime('%Y-%m-%d'),
@@ -583,7 +586,8 @@ def index():
                          alert_days=ALERT_DAYS,
                          ssl_alerts=ssl_alerts,
                          ssl_expired=ssl_expired,
-                         ssl_errors=ssl_errors)
+                         ssl_errors=ssl_errors,
+                         current_user=current_user)
 
 
 @app.route('/domains/<domain>/alerts')
@@ -604,7 +608,8 @@ def domain_alerts(domain):
     
     return render_template('alerts.html',
                          domain=domain_info,
-                         configs=configs)
+                         configs=configs,
+                         current_user=current_user)
 
 
 @app.route('/add', methods=['POST'])
@@ -690,7 +695,7 @@ def api_refresh():
 @app.route('/health')
 def health():
     """Health check endpoint."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     cache_info = {
         domain: {
             'age_minutes': int((now - data['timestamp']).total_seconds() / 60)
