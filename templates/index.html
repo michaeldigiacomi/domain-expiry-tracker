@@ -293,8 +293,16 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔔 Domain Expiry Tracker</h1>
-            <p>Monitor your domain expiration dates and get alerts when they're expiring soon.</p>
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <h1>🔔 Domain Expiry Tracker</h1>
+                    <p>Monitor your domain expiration dates and get alerts when they're expiring soon.</p>
+                </div>
+                <div style="text-align: right;">
+                    <span style="color: white; opacity: 0.9; font-size: 0.9rem;">👤 {{ current_user.username }}</span>
+                    <a href="/logout" class="btn" style="background: rgba(255,255,255,0.2); color: white; padding: 8px 16px; font-size: 0.85rem; text-decoration: none; margin-left: 10px;">Logout</a>
+                </div>
+            </div>
         </header>
         
         <div class="stats">

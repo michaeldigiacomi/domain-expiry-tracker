@@ -37,6 +37,24 @@ spec:
                   name: domain-tracker-secrets
                   key: discord-webhook
                   optional: true
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: domain-tracker-secrets
+                  key: admin-username
+                  optional: true
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: domain-tracker-secrets
+                  key: admin-password
+                  optional: true
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: domain-tracker-secrets
+                  key: secret-key
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data
