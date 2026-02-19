@@ -32,7 +32,7 @@ from whois_cache import get_whois_cache_manager, WhoisCacheManager
 Base = declarative_base()
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
+app.secret_key = os.environ.get('SECRET_KEY') or 'dev-key-change-in-production'
 
 # Initialize Flask-Login
 login_manager = LoginManager()
@@ -42,8 +42,8 @@ login_manager.login_message = 'Please log in to access this page.'
 login_manager.login_message_category = 'warning'
 
 # Admin credentials from environment variables
-ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME', 'admin')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'changeme')
+ADMIN_USERNAME = os.environ.get('ADMIN_USERNAME') or 'admin'
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD') or 'changeme'
 
 
 class User(UserMixin):
