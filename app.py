@@ -396,12 +396,13 @@ def check_domain(domain, use_cache=True):
     
     # Initialize persistent cache manager
     cache_manager = get_whois_cache_manager()
+    cached_result = None
     
     # Check persistent cache first (survives pod restarts)
     if use_cache:
         cached_result = cache_manager.get(domain)
-        if cached_result and not cached_result.stale:
-            # Return fresh cached data
+        # Return fresh cached data only if no error on last lookup
+        if cached_result and not cached_result.stale and not cached_result.error:
             return {
                 'expiry_date': cached_result.expiry_date,
                 'days_left': cached_result.days_left,
@@ -410,9 +411,9 @@ def check_domain(domain, use_cache=True):
                 'cached': True,
                 'cache_age_minutes': int(cached_result.cache_age_days * 24 * 60)
             }
-        # If stale or has error, we'll refresh but fall back to this if needed
+        # If stale or had error, we'll do a fresh lookup below
     
-    # Perform WHOIS lookup with timeout
+    # Perform WHOIS lookup with timeout (retry if stale or had error)
     try:
         info = _whois_lookup_with_timeout(domain)
         expiry_date = info.expiration_date
@@ -422,6 +423,8 @@ def check_domain(domain, use_cache=True):
         
         if not expiry_date:
             result = {'error': 'No expiration date found', 'cached': False}
+            # Store error in cache
+            cache_manager.set(domain=domain, error='No expiration date found')
         else:
             # Ensure expiry_date is timezone-aware for comparison
             if expiry_date.tzinfo is None:
@@ -434,9 +437,16 @@ def check_domain(domain, use_cache=True):
                 'alert': days_left <= ALERT_DAYS,
                 'cached': False
             }
+            # Update persistent cache with successful result
+            cache_manager.set(
+                domain=domain,
+                expiry_date=result.get('expiry_date'),
+                days_left=result.get('days_left')
+            )
     except TimeoutError as e:
-        # Return persistent cached data if available, even if expired
-        if use_cache and cached_result:
+        # Fresh lookup failed - fall back to cached data if available
+        if use_cache and cached_result and cached_result.expiry_date:
+            cache_manager.set(domain=domain, error=f"WHOIS timeout: {str(e)}")
             return {
                 'expiry_date': cached_result.expiry_date,
                 'days_left': cached_result.days_left,
@@ -446,10 +456,13 @@ def check_domain(domain, use_cache=True):
                 'stale': True,
                 'error': f"WHOIS timeout, showing cached data: {str(e)}"
             }
+        # No cached data available
+        cache_manager.set(domain=domain, error=f"WHOIS timeout: {str(e)}")
         result = {'error': f'WHOIS lookup timed out: {str(e)}', 'cached': False}
     except Exception as e:
-        # Return persistent cached data if available on any error
-        if use_cache and cached_result:
+        # Fresh lookup failed - fall back to cached data if available
+        if use_cache and cached_result and cached_result.expiry_date:
+            cache_manager.set(domain=domain, error=f"WHOIS error: {str(e)}")
             return {
                 'expiry_date': cached_result.expiry_date,
                 'days_left': cached_result.days_left,
@@ -459,15 +472,9 @@ def check_domain(domain, use_cache=True):
                 'stale': True,
                 'error': f"WHOIS error, showing cached data: {str(e)}"
             }
+        # No cached data available
+        cache_manager.set(domain=domain, error=f"WHOIS error: {str(e)}")
         result = {'error': str(e), 'cached': False}
-    
-    # Update persistent cache with successful result
-    if 'error' not in result:
-        cache_manager.set(
-            domain=domain,
-            expiry_date=result.get('expiry_date'),
-            days_left=result.get('days_left')
-        )
     
     return result
 
